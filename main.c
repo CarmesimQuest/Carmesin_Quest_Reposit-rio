@@ -7,6 +7,78 @@
 #include <stdbool.h>
 #include <assert.h>
 
+typedef struct Fade{
+
+    bool ativo;
+    bool fade_in; //se for verdadeiro = fade in, se falso = fade out
+    float alpha;
+    float vlc;
+    Uint32 duracao;
+    Uint32 tempo_inicio;
+}Fade;
+
+//funções para texto abaixo
+typedef struct TextTexture{
+
+    SDL_Texture* texture;
+    int largura;
+    int altura;
+
+}TTR;
+
+TTR CarregaTexto(SDL_Renderer* renderer, TTF_Font* font, const char* text, SDL_Color color){
+
+    TTR result = {NULL, 0, 0};
+
+    SDL_Surface* surface = TTF_RenderText_Blended(font, text, color);
+
+    if(!surface){
+        return result;
+    }
+
+    result.texture = SDL_CreateTextureFromSurface(renderer, surface);
+
+    if(result.texture){
+
+        result.largura = surface -> w;
+        result.altura = surface -> h;
+
+    }
+
+    SDL_FreeSurface(surface);
+
+    return result;
+}
+
+void renderText(SDL_Renderer* renderer, TTR text){
+
+    if(!text.texture){
+        return;
+    }
+
+    SDL_Rect dest = {0, 0, text.largura, text.altura};
+    SDL_RenderCopy(renderer, text.texture, NULL, &dest);
+
+}
+
+void renderTextAt(SDL_Renderer* renderer, TTR text, int x, int y){
+
+    if(!text.texture){
+        return;
+    }
+
+    SDL_Rect dest = {x, y, text.largura, text.altura};
+    SDL_RenderCopy(renderer, text.texture, NULL, &dest);
+}
+
+void freeTextTexture(TTR text){
+
+    if(text.texture){
+        SDL_DestroyTexture(text.texture);
+    }
+}
+
+//funções para imagens abaixo
 SDL_Texture* carregarTextura(const char* caminho, SDL_Renderer* renderer){
 
     SDL_Texture* textura = NULL;
@@ -39,6 +111,61 @@ OBI criarObjetoImagem(const char* caminho, SDL_Renderer* renderer, int x, int y,
 
 }
 
+//funções para o controle do fade
+
+void iniciarFade(Fade* fade, bool fade_in, Uint32 duracao_ms){
+
+    fade -> ativo = true;
+    fade -> fade_in = fade_in;
+    fade -> duracao = duracao_ms;
+    fade -> tempo_inicio = SDL_GetTicks();
+
+    if(fade_in){
+        fade -> alpha = 0.0f; //começa transparente
+    }
+
+    else{
+        fade -> alpha = 1.0f;
+    }
+}
+
+void atualizarFade(Fade* fade){
+
+    if(!fade -> ativo){
+        return;
+    }
+
+    Uint32 tempo_atual = SDL_GetTicks();
+    Uint32 tempo_decorrido = tempo_atual - fade -> tempo_inicio;
+    float progresso = (float)tempo_decorrido / fade -> duracao;
+
+    if(progresso >= 1.0f){
+        progresso = 1.0f;
+        fade -> ativo = false;
+    }
+
+    if(fade -> fade_in){
+        fade -> alpha = progresso;//0 -> 1
+    }
+
+    else{
+        fade -> alpha = 1.0f - progresso; //1 -> 0
+    }
+}
+
+void renderizaFade(SDL_Renderer* renderer, Fade* fade){
+
+    if(!fade -> ativo && fade -> alpha == 0.0f){
+        return;
+    }
+
+    // Criar uma textura preta semitransparente para o fade
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, (Uint8)(fade -> alpha * 255));
+    SDL_RenderFillRect(renderer, NULL);
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+}
+
 int main (int argc, char* args[])
 {
     srand(time(NULL));
@@ -49,29 +176,34 @@ int main (int argc, char* args[])
     SDL_Window* win = SDL_CreateWindow("Teste Carmim",
                          SDL_WINDOWPOS_UNDEFINED,
                          SDL_WINDOWPOS_UNDEFINED,
-                         400, 400, SDL_WINDOW_SHOWN
+                         800, 600, SDL_WINDOW_SHOWN
                       );
 
     SDL_Renderer* ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED);
 
     //carrgar imagens
-    OBI img1 = criarObjetoImagem("teste_fundo_Menu.png", ren, 0, 0, 400, 400);
-    OBI img2 = criarObjetoImagem("teste_de_imagem", ren, 0, 0, 400, 400);
+    OBI img1 = criarObjetoImagem("teste_fundo_Menu.png", ren, 0, 0, 800, 600);
+    OBI img2 = criarObjetoImagem("vila_place_holder.png", ren, 0, 0, 800, 600);
 
     // Carregar a fonte uma única vez no início
-    TTF_Font* fnt = TTF_OpenFont("minecraft_font.ttf", 20);
-    SDL_Texture* txt = NULL;
+    TTF_Font* fnt = TTF_OpenFont("minecraft_font.ttf", 12);
+    SDL_Color corTexto = { 0, 255, 255, 255};
     int texto_visivel = 0;
 
-    //blocos
-    SDL_Rect r = { 0, 200, 200, 200 };
-    SDL_Rect r2 = { 100, 100, 50, 50 };
-    SDL_Rect r3 =  { 50, 50, 90, 70 };
-    SDL_Rect r4 = { 200, 200, 200, 200 };
+    TTR hello = CarregaTexto(ren, fnt, "Deu certo", corTexto);
+    TTR sdl = CarregaTexto(ren, fnt, "SDL2 com texto", corTexto);
 
-    bool vrfqudrado = false;
-    bool vrfqudrado2 = false;
-    bool vrfim1 = false;
+    //blocos
+    SDL_Rect r = { 0, 500, 200, 200 };
+    SDL_Rect r2 = { 600, 500, 200, 200 };
+
+    //bloco do fade
+    Fade fade = {false, true, 0.0f, 0.0f, 0, 0};
+    bool em_transicao = false;
+    int prox_tela = 0; //0 = tela, 1 = tela2
+
+    //permite a aparição da imagem
+    bool vrfim1 = true;
     bool vrfim2 = false;
 
     int stop = 0;
@@ -106,21 +238,35 @@ int main (int argc, char* args[])
                     case SDLK_RIGHT:
                         r.x += 10;
                         break;
+                    case SDLK_f://usar o f pra testar o fade
+                        if(!em_transicao){
+                            em_transicao = true;
+                            iniciarFade(&fade, false, 1000);//fade out por 1 seg
+                        }
+                        break;
                 }
             }
 
             else if(evt.type == SDL_QUIT){
-                break;
+                stop++;
             }
 
             // MOVER a verificação do clique do mouse para DENTRO do if(isevt)
             if(evt.type == SDL_MOUSEBUTTONDOWN){
                 SDL_GetMouseState(&mouseX, &mouseY);
 
+                //click em r
                 if(mouseX >= r.x && mouseX <= r.x + r.w && mouseY >= r.y && mouseY <= r.y + r.h){
-                    vrfqudrado2 = true;
-                    vrfqudrado = false;
 
+                    em_transicao = true;
+                    if(vrfim1 == true){
+                        prox_tela = 2;
+                    }
+                    else{
+                        prox_tela = 1;
+                    }
+
+                    iniciarFade(&fade, false, 500);
 
                     /*printf("\nX:%d, Y:%d", mouseX, mouseY);
                     red = rand() % 255;
@@ -132,23 +278,12 @@ int main (int argc, char* args[])
 
                     printf("\nposição X r2:%d\n", r2.x);
                     printf("\nposição Y r2:%d\n", r2.y);
+
                 }
 
+                //click em r2
                 if(mouseX >= r2.x && mouseX <= r2.x + r2.w && mouseY >= r2.y && mouseY <= r2.y + r2.h){
-                    printf("Tá clicando r2");
-                    vrfqudrado = true;
-                    texto_visivel = false;
-                }
-
-                if(mouseX >= r4.x && mouseX <= r4.x + r4.w && mouseY >= r4.y && mouseY <= r4.y + r4.h){
                     texto_visivel = 1;
-                    // Criar a textura do texto apenas uma vez quando o quadrado for clicado
-                    if(fnt && !txt){
-                        SDL_Color clr = {0xFF, 0x00, 0x00, 0xFF};
-                        SDL_Surface* sfc = TTF_RenderText_Blended(fnt, "deu certo!", clr);
-                        txt = SDL_CreateTextureFromSurface(ren, sfc);
-                        SDL_FreeSurface(sfc);
-                    }
                 }
             }
         }
@@ -156,29 +291,38 @@ int main (int argc, char* args[])
             espera = 500;
         }
 
+        //atualizar efeito de fade
+        if(fade.ativo){
+            atualizarFade(&fade);
+
+            //Quando o fade out terminhar, iniciar fade in
+            if(!fade.ativo && fade.fade_in == false && em_transicao){
+                //troca a tela
+                if(prox_tela == 1){
+                    vrfim1 = true;
+                    vrfim2 = false;
+                }
+                else if(prox_tela == 2){
+                    vrfim1 = false;
+                    vrfim2 = true;
+                }
+
+                iniciarFade(&fade, true, 500); //inicia o fade após a troca de tela
+            }
+
+            //quando o fade in terminar, finalizar transição
+            if(!fade.ativo && fade.fade_in == true && em_transicao){
+                em_transicao = false;
+            }
+        }
+
         if(SDL_HasIntersection(&r, &r2)){
             printf("\nencostou\n");
         }
 
-        //renderização abaixo
+        //renderização abaixo tela
         SDL_SetRenderDrawColor(ren, red, green, blue, 0x00);
         SDL_RenderClear(ren);
-
-        if(vrfqudrado2 == true){
-            SDL_SetRenderDrawColor(ren, red + 70, green + 170, blue + 90, 0x00);
-            SDL_RenderFillRect(ren, &r2);
-        }
-
-        if(vrfqudrado == true){
-            SDL_SetRenderDrawColor(ren, red + 50, green + 100, blue + 150, 0x00);
-            SDL_RenderFillRect(ren, &r3);
-        }
-
-        //renderizando texto
-        if(texto_visivel == 1 && txt){
-            SDL_Rect text_rect = {80, 80, 200, 40};
-            SDL_RenderCopy(ren, txt, NULL, &text_rect);
-        }
 
         //renderiza imagem
 
@@ -186,11 +330,28 @@ int main (int argc, char* args[])
             SDL_RenderCopy(ren, img1.textura, NULL, &img1.posicao);
         }
 
+        if(img1.textura && vrfim2){
+            SDL_RenderCopy(ren, img2.textura, NULL, &img2.posicao);
+        }
+
+        //renderizando texto
+        if(texto_visivel == 1){
+            renderTextAt(ren, hello, 50, 50);
+            renderTextAt(ren, sdl, 50, 100);
+        }
+
+        //renderiza bloco
+
         SDL_SetRenderDrawColor(ren, 0, 0, blue, 0x00);
         SDL_RenderFillRect(ren, &r);
 
         SDL_SetRenderDrawColor(ren, 255, 0, 0, 0);
-        SDL_RenderFillRect(ren, &r4);
+        SDL_RenderFillRect(ren, &r2);
+
+        //renderizar efeito de fade por ultimo(sobre tudo)
+        if(fade.ativo || fade.alpha > 0.0f){
+            renderizaFade(ren, &fade);
+        }
 
         SDL_RenderPresent(ren);
     }
@@ -199,9 +360,13 @@ int main (int argc, char* args[])
     if(img1.textura){
         SDL_DestroyTexture(img1.textura);
     }
+    if(img2.textura){
+        SDL_DestroyTexture(img2.textura);
+    }
 
-    if (txt) SDL_DestroyTexture(txt);
-    if (fnt) TTF_CloseFont(fnt);
+    freeTextTexture(hello);
+    freeTextTexture(sdl);
+    TTF_CloseFont(fnt);
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);
     IMG_Quit();
